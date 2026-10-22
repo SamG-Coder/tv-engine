@@ -7,7 +7,7 @@ import android.util.Log;
 /** Android SurfaceView and input adapter; Vulkan rendering runs on one native worker. */
 public class VulkanActivity extends Activity implements SurfaceHolder.Callback {
  static {System.loadLibrary("tcl_rust_engine");}
- private static native void runVulkan(Surface surface,int objects,int frames,boolean tour,float fixedTime);
+ private static native void runVulkan(Surface surface,int objects,int frames,boolean tour,float fixedTime,boolean water,int waterHeight);
  private static native void prepareVulkan();
  private static native void stopVulkan();
  private static native void inputVulkan(int keys,float turn,float move);
@@ -18,7 +18,7 @@ public class VulkanActivity extends Activity implements SurfaceHolder.Callback {
   view=new SurfaceView(this);view.getHolder().setFixedSize(3840,2160);view.getHolder().addCallback(this);
   android.widget.FrameLayout root=new android.widget.FrameLayout(this);root.addView(view);
   if(!getIntent().getBooleanExtra("tour",false)){
-   android.widget.TextView help=new android.widget.TextView(this);help.setText("RUST 3D  /  VULKAN 4K     Arrows: walk and turn     OK: boost     Back: exit");help.setTextColor(0xffd2ecdf);help.setTextSize(14);help.setPadding(28,14,28,14);help.setBackgroundColor(0x700b1924);root.addView(help,new android.widget.FrameLayout.LayoutParams(-1,-2,Gravity.BOTTOM));
+   android.widget.TextView help=new android.widget.TextView(this);help.setText("CLEARWATER 6.1  /  VULKAN 4K     Arrows: walk and turn     OK: boost     Back: exit");help.setTextColor(0xffd2ecdf);help.setTextSize(14);help.setPadding(28,14,28,14);help.setBackgroundColor(0x700b1924);root.addView(help,new android.widget.FrameLayout.LayoutParams(-1,-2,Gravity.BOTTOM));
   }
   setContentView(root);
  }
@@ -28,7 +28,7 @@ public class VulkanActivity extends Activity implements SurfaceHolder.Callback {
   restartPending=false;
   prepareVulkan();
   final Surface surface=view.getHolder().getSurface();
-  worker=new Thread(()->{runVulkan(surface,getIntent().getIntExtra("objects",0),getIntent().getIntExtra("frames",0),getIntent().getBooleanExtra("tour",false),getIntent().getFloatExtra("benchmarkTime",-1));runOnUiThread(()->{worker=null;if(restartPending)start();});},"RustVulkan");worker.start();
+  worker=new Thread(()->{runVulkan(surface,getIntent().getIntExtra("objects",0),getIntent().getIntExtra("frames",0),getIntent().getBooleanExtra("tour",false),getIntent().getFloatExtra("benchmarkTime",-1),getIntent().getBooleanExtra("water",true),getIntent().getIntExtra("waterHeight",1080));runOnUiThread(()->{worker=null;if(restartPending)start();});},"RustVulkan");worker.start();
  }
  @Override public void onResume(){super.onResume();resumed=true;start();}
  @Override public void onPause(){resumed=false;keys=0;inputVulkan(0,0,0);stopVulkan();super.onPause();}

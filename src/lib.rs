@@ -8,3 +8,6 @@ pub mod visibility;
 pub mod vk_renderer;
 #[cfg(target_os = "android")]
 mod vulkan;
+
+#[cfg(target_os = "android")]
+pub mod water;

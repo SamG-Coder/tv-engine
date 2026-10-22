@@ -1,0 +1,74 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "water_common.glsl"
+layout(local_size_x=64) in;
+const int MODE=WATER_MODE;
+layout(set=0,binding=0,std430) buffer Seeds { vec4 seed[]; };
+layout(set=0,binding=1,std430) buffer A { vec2 a[]; };
+layout(set=0,binding=2,std430) buffer B { vec2 b[]; };
+layout(set=0,binding=3,std430) buffer Photons { uint photons[]; };
+layout(set=0,binding=4,std430) buffer Packed { uint packed[]; };
+layout(set=0,binding=5) uniform sampler2DArray waves;
+layout(push_constant) uniform Params { vec4 eyeTime; vec4 forwardAspect; vec4 rightDepth; vec4 upExposure; } pc;
+const int N=128;
+vec2 mulc(vec2 a,vec2 b){return vec2(a.x*b.x-a.y*b.y,a.x*b.y+a.y*b.x);}
+float patchSize(int c){return c==0?6.:96.;}
+vec2 initial(int x,int z,int c){
+ int fx=x<64?x:x-128,fz=z<64?z:z-128;
+ vec2 k=6.2831853*vec2(fx,fz)/patchSize(c);float kk=dot(k,k);if(kk<.00001)return vec2(0);
+ float alignment=pow(dot(k,vec2(.6,-.8)),2)/kk,L=25./9.81;
+ float P=exp(-1./(kk*L*L))*exp(-kk*.006)/(kk*kk)*(.12+.88*alignment);
+ float band=c==0?1.-exp(-kk*1.5):exp(-kk*.8);
+ uint id=uint(c*16384+z*128+x+17);
+ float radius=sqrt(-2.*log(max(.000001,randf(id*2u)))),angle=6.2831853*randf(id*2u+1u);
+ float amp=sqrt(P*band)*(c==0?.023:.018)*6.2831853/patchSize(c);
+ return radius*vec2(cos(angle),sin(angle))*amp;
+}
+int reverse7(int x){return int(bitfieldReverse(uint(x))>>25);}
+uint packSky(vec3 v){uint rg=packHalf2x16(max(v.rg,vec2(0))),b=packHalf2x16(vec2(max(v.b,0),0));return (((rg&65535u)+8u)>>4)|((((rg>>16)+8u)>>4)<<11)|((((b&65535u)+16u)>>5)<<22);}
+void store4(int i,vec4 v){packed[i*2]=packHalf2x16(v.xy);packed[i*2+1]=packHalf2x16(v.zw);}
+shared vec2 values[128];shared vec2 rotations[64];
+void main(){
+ int idx=int(gl_GlobalInvocationID.x),x=idx&127,z=(idx>>7)&127,c=idx>>14;
+ if(MODE==0){seed[idx]=vec4(initial(x,z,c),initial((-x)&127,(-z)&127,c));return;}
+ if(MODE==1){
+  vec4 h=seed[idx];vec2 k=6.2831853*vec2(x<64?x:x-128,z<64?z:z-128)/patchSize(c);float km=length(k);
+  float e=exp(-2.*min(20.,km*pc.rightDepth.w)),omega=sqrt(9.81*km*(1.-e)/(1.+e));
+  float phase=omega*pc.eyeTime.w;vec2 p=vec2(cos(phase),sin(phase));
+  a[c*16384+reverse7(z)*128+reverse7(x)]=(mulc(h.xy,p)+mulc(h.zw*vec2(1,-1),p*vec2(1,-1)))*.8;return;
+ }
+ if(MODE==2||MODE==3){
+  int lane=int(gl_LocalInvocationID.x),line=int(gl_WorkGroupID.x),base=int(gl_WorkGroupID.y)*16384;
+  int first=MODE==2?base+line*128+lane:base+lane*128+line,second=first+(MODE==2?64:8192);
+  values[lane]=MODE==2?a[first]:b[first];values[lane+64]=MODE==2?a[second]:b[second];
+  float angle=6.2831853*float(lane)/128.;rotations[lane]=vec2(cos(angle),sin(angle));barrier();
+  for(int span=2;span<=128;span*=2){int halfSpan=span/2,j=lane&(halfSpan-1),left=(lane/halfSpan)*span+j,right=left+halfSpan;
+   vec2 v=values[left],w=mulc(values[right],rotations[j*(128/span)]);values[left]=v+w;values[right]=v-w;barrier();}
+  if(MODE==2){b[first]=values[lane];b[second]=values[lane+64];}else{a[first]=values[lane];a[second]=values[lane+64];}return;
+ }
+ if(MODE==4){int base=c*16384;float dx=patchSize(c)/128.;
+  store4(idx,vec4(a[idx].x,(a[base+z*128+((x+1)&127)].x-a[base+z*128+((x-1)&127)].x)/(2.*dx),(a[base+((z+1)&127)*128+x].x-a[base+((z-1)&127)*128+x].x)/(2.*dx),0));return;}
+ if(MODE==5){photons[idx]=0;return;}
+ if(MODE==6){
+  vec2 pos=(vec2(idx&255,idx>>8)+.5)*6./256.;vec3 w=textureLod(waves,vec3(pos/6.+.5/128.,0),0).xyz;
+  vec3 n=normalize(vec3(-w.y,1,-w.z));vec3 d=refract(-sunDir(),n,.7502);vec2 hit=pos+d.xz*((-pc.rightDepth.w-w.x)/d.y);
+  vec2 uv=hit*256./6.-.5;ivec2 ip=ivec2(floor(uv));vec2 f=fract(uv);
+  for(int j=0;j<2;j++)for(int i=0;i<2;i++){ivec2 p=(ip+ivec2(i,j))&255;float weight=(i==0?1.-f.x:f.x)*(j==0?1.-f.y:f.y);atomicAdd(photons[p.y*256+p.x],uint(weight*4096.+.5));}return;
+ }
+ if(MODE==7){vec2 result;
+  for(int lane=0;lane<2;lane++) {int id=idx*2+lane;ivec2 p=ivec2(id&255,id>>8);float sum=0;
+   for(int j=-1;j<=1;j++)for(int i=-1;i<=1;i++){ivec2 q=(p+ivec2(i,j))&255;sum+=float(photons[q.y*256+q.x])*float((i==0?2:1)*(j==0?2:1));}
+   result[lane]=sum/(16.*4096.);
+  }packed[idx]=packHalf2x16(result);return;
+ }
+ if(MODE==9){vec2 p=(vec2(idx&511,idx>>9)+.5)/256.-1.;float k=1.+dot(p,p);vec3 d=vec3(2.*p.x,1.-dot(p,p),2.*p.y)/k;packed[idx]=packSky(sky(d,sunDir()));return;}
+ if(MODE==8){
+  vec2 p=(vec2(idx&1023,idx>>10)+.5)*24./1024.;
+  // Blend only the outer metre into a periodic tile, retaining original material inside.
+  vec2 f=smoothstep(vec2(23),vec2(24),p);vec3 col=seabed(p.x,p.y,.012);
+  if(f.x>0)col=mix(col,seabed(p.x-24.,p.y,.012),f.x);
+  if(f.y>0){vec3 other=seabed(p.x,p.y-24.,.012);if(f.x>0)other=mix(other,seabed(p.x-24.,p.y-24.,.012),f.x);col=mix(col,other,f.y);}
+  packed[idx]=packUnorm4x8(vec4(col,1));return;
+ }
+}
+

@@ -66,6 +66,19 @@ impl Buffer {
         b.mapped = d.map_memory(b.memory, 0, req.size, vk::MemoryMapFlags::empty())?;
         Ok(b)
     }
+    /// Diagnostic readback only, after the submitting fence and a GPU-to-host barrier.
+    pub unsafe fn read<T: Copy + Default>(&self, count: usize) -> Result<Vec<T>> {
+        assert!(count * size_of::<T>() <= self.bytes);
+        if !self.coherent {
+            self.device
+                .invalidate_mapped_memory_ranges(&[vk::MappedMemoryRange::default()
+                    .memory(self.memory)
+                    .size(vk::WHOLE_SIZE)])?;
+        }
+        let mut result = vec![T::default(); count];
+        ptr::copy_nonoverlapping(self.mapped.cast::<T>(), result.as_mut_ptr(), count);
+        Ok(result)
+    }
     pub unsafe fn write<T: Copy>(&self, data: &[T]) -> Result<()> {
         assert!(std::mem::size_of_val(data) <= self.bytes);
         ptr::copy_nonoverlapping(

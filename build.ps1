@@ -13,9 +13,13 @@ $env:JAVA_HOME=$jdk
 Push-Location $root
 try {
  New-Item -ItemType Directory -Force out/shaders | Out-Null
- foreach($stage in @('vert','frag')) {
-  & "$ndk/shader-tools/windows-x86_64/glslc.exe" -O --target-env=vulkan1.0 "shaders/scene.$stage" -o "out/shaders/scene.$stage.spv"
+ foreach($shader in @('scene.vert','scene.frag','water.vert','water.frag','water_present.vert','water_present.frag')) {
+  & "$ndk/shader-tools/windows-x86_64/glslc.exe" -O --target-env=vulkan1.0 "shaders/$shader" -o "out/shaders/$shader.spv"
   if($LASTEXITCODE -ne 0){throw 'Shader compilation failed'}
+ }
+ for($mode=0;$mode -lt 10;$mode++) {
+  & "$ndk/shader-tools/windows-x86_64/glslc.exe" -O --target-env=vulkan1.0 "-DWATER_MODE=$mode" shaders/water.comp -o "out/shaders/water-$mode.comp.spv"
+  if($LASTEXITCODE -ne 0){throw "Water stage $mode compilation failed"}
  }
  cargo build --release --target armv7-linux-androideabi
  if($LASTEXITCODE -ne 0){throw 'Rust build failed'}

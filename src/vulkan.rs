@@ -77,6 +77,8 @@ unsafe fn run(
     limit: u32,
     tour: bool,
     fixed_time: f32,
+    water_mode: bool,
+    water_height: u32,
 ) -> Result<()> {
     let entry = Entry::load()?;
     let app = vk::ApplicationInfo::default().api_version(vk::API_VERSION_1_0);
@@ -132,7 +134,8 @@ unsafe fn run(
             .iter()
             .enumerate()
         {
-            if q.queue_flags.contains(vk::QueueFlags::GRAPHICS)
+            if q.queue_flags
+                .contains(vk::QueueFlags::GRAPHICS | vk::QueueFlags::COMPUTE)
                 && r.surface_api
                     .get_physical_device_surface_support(physical, i as u32, r.surface)?
             {
@@ -339,6 +342,50 @@ unsafe fn run(
             None,
         )?);
     }
+    if water_mode {
+        let features = r
+            .instance
+            .get_physical_device_format_properties(physical, vk::Format::R16G16B16A16_SFLOAT)
+            .optimal_tiling_features;
+        if !features.contains(
+            vk::FormatFeatureFlags::SAMPLED_IMAGE_FILTER_LINEAR
+                | vk::FormatFeatureFlags::BLIT_SRC
+                | vk::FormatFeatureFlags::BLIT_DST,
+        ) {
+            return Err("Water requires filterable/blittable RGBA16F textures".into());
+        }
+    }
+    if water_mode {
+        for format in [
+            vk::Format::R16_SFLOAT,
+            vk::Format::B10G11R11_UFLOAT_PACK32,
+            vk::Format::R8G8B8A8_UNORM,
+        ] {
+            let flags = r
+                .instance
+                .get_physical_device_format_properties(physical, format)
+                .optimal_tiling_features;
+            if !flags.contains(
+                vk::FormatFeatureFlags::SAMPLED_IMAGE_FILTER_LINEAR
+                    | vk::FormatFeatureFlags::BLIT_SRC
+                    | vk::FormatFeatureFlags::BLIT_DST,
+            ) {
+                return Err(format!("Water format unsupported: {format:?}").into());
+            }
+        }
+    }
+    let mut water = if water_mode {
+        Some(crate::water::Water::new(
+            d,
+            &props,
+            r.pass,
+            extent,
+            FRAMES_IN_FLIGHT,
+            water_height,
+        )?)
+    } else {
+        None
+    };
     let pipeline = Renderer::new(d, r.pass, extent)?;
     let mut scene = scene::build();
     let terrain = Mesh::upload(d, &props, &scene.vertices)?;
@@ -396,6 +443,9 @@ unsafe fn run(
         let fixed = &fixed[slot];
         let begin = Instant::now();
         d.wait_for_fences(&[r.fence[slot]], true, 2_000_000_000)?;
+        if let Some(w) = &mut water {
+            w.validate_completed(slot)?;
+        }
         let waited = begin.elapsed().as_secs_f64();
         let acquire = Instant::now();
         let (idx, _) = swap_api.acquire_next_image(
@@ -409,7 +459,9 @@ unsafe fn run(
         let now = Instant::now();
         let dt = (now - previous).as_secs_f32().min(0.05);
         previous = now;
-        scene_time = if fixed_time >= 0. {
+        scene_time = if water_mode {
+            started.elapsed().as_secs_f32()
+        } else if fixed_time >= 0. {
             fixed_time
         } else {
             scene_time + dt
@@ -419,7 +471,12 @@ unsafe fn run(
             - if keys & 4 != 0 { 1. } else { 0. })
             * dt
             * 1.65;
-        let forward = V(yaw.sin(), -0.12, -yaw.cos()).norm();
+        let forward = V(
+            yaw.sin(),
+            if water_mode { -0.45 } else { -0.12 },
+            -yaw.cos(),
+        )
+        .norm();
         let walk = f32::from_bits(MOVE.load(Ordering::Relaxed))
             + if keys & 1 != 0 { 1. } else { 0. }
             - if keys & 2 != 0 { 1. } else { 0. };
@@ -433,8 +490,17 @@ unsafe fn run(
             eye = V(a.sin() * 19., 0., a.cos() * 19.);
             yaw = -a;
         }
-        eye.1 = scene::height(eye.0, eye.2) + 2.2;
-        let forward = V(yaw.sin(), -0.12, -yaw.cos()).norm();
+        eye.1 = if water_mode {
+            1.65
+        } else {
+            scene::height(eye.0, eye.2) + 2.2
+        };
+        let forward = V(
+            yaw.sin(),
+            if water_mode { -0.45 } else { -0.12 },
+            -yaw.cos(),
+        )
+        .norm();
         if !tour {
             for (i, p) in scene.gems.iter().enumerate() {
                 let delta = *p - eye;
@@ -468,6 +534,22 @@ unsafe fn run(
             &vk::CommandBufferBeginInfo::default()
                 .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
         )?;
+        let right = forward.cross(V(0., 1., 0.)).norm();
+        let up = right.cross(forward).norm();
+        let water_camera = crate::water::WaterCamera {
+            eye_time: camera.eye_time,
+            forward_aspect: [
+                forward.0,
+                forward.1,
+                forward.2,
+                extent.width as f32 / extent.height as f32,
+            ],
+            right_depth: [right.0, right.1, right.2, 1.4],
+            up_exposure: [up.0, up.1, up.2, 1.],
+        };
+        if let Some(w) = &mut water {
+            w.prepare(cmd, slot, &water_camera);
+        }
         let clear = [
             vk::ClearValue {
                 color: vk::ClearColorValue {
@@ -494,77 +576,83 @@ unsafe fn run(
                 .clear_values(&clear),
             vk::SubpassContents::INLINE,
         );
-        pipeline.begin(cmd, &camera);
-        let mut material = Material::Static;
-        let mut order: [usize; 64] = std::array::from_fn(|i| i);
-        order.sort_unstable_by(|a, b| {
-            let a = scene.chunks[*a].center - eye;
-            let b = scene.chunks[*b].center - eye;
-            a.dot(a).total_cmp(&b.dot(b))
-        });
         let mut draws = 0;
         let mut triangles = 0;
-        for i in order {
-            let chunk = &scene.chunks[i];
-            let delta = chunk.center - eye;
-            let dist = delta.dot(delta).sqrt();
-            if dist > 85. || (dist > 12. && delta.dot(forward) < dist * 0.25 - 12.) {
-                continue;
+        if let Some(w) = &water {
+            w.draw(cmd, slot, extent);
+            draws = 1;
+            triangles = 64 * 36 * 2;
+        } else {
+            pipeline.begin(cmd, &camera);
+            let mut material = Material::Static;
+            let mut order: [usize; 64] = std::array::from_fn(|i| i);
+            order.sort_unstable_by(|a, b| {
+                let a = scene.chunks[*a].center - eye;
+                let b = scene.chunks[*b].center - eye;
+                a.dot(a).total_cmp(&b.dot(b))
+            });
+            for i in order {
+                let chunk = &scene.chunks[i];
+                let delta = chunk.center - eye;
+                let dist = delta.dot(delta).sqrt();
+                if dist > 85. || (dist > 12. && delta.dot(forward) < dist * 0.25 - 12.) {
+                    continue;
+                }
+                pipeline.draw(
+                    cmd,
+                    &terrain,
+                    &fixed,
+                    0,
+                    1,
+                    chunk.first as u32,
+                    chunk.count as u32,
+                    material,
+                );
+                draws += 1;
+                triangles += chunk.count / 3;
             }
+            material = Material::Water;
             pipeline.draw(
                 cmd,
                 &terrain,
                 &fixed,
                 0,
                 1,
-                chunk.first as u32,
-                chunk.count as u32,
+                scene.water.0 as u32,
+                scene.water.1 as u32,
                 material,
             );
             draws += 1;
-            triangles += chunk.count / 3;
-        }
-        material = Material::Water;
-        pipeline.draw(
-            cmd,
-            &terrain,
-            &fixed,
-            0,
-            1,
-            scene.water.0 as u32,
-            scene.water.1 as u32,
-            material,
-        );
-        draws += 1;
-        triangles += scene.water.1 / 3;
-        material = Material::Bobbing;
-        pipeline.draw(
-            cmd,
-            &terrain,
-            &fixed,
-            1,
-            gem_count as u32,
-            scene.gem.0 as u32,
-            scene.gem.1 as u32,
-            material,
-        );
-        draws += 1;
-        triangles += scene.gem.1 / 3 * gem_count as i32;
-        material = Material::Instanced;
-        pipeline.draw(
-            cmd,
-            &stress,
-            &dynamic,
-            0,
-            visible.len() as u32,
-            0,
-            stress.count,
-            material,
-        );
-        if !visible.is_empty() {
+            triangles += scene.water.1 / 3;
+            material = Material::Bobbing;
+            pipeline.draw(
+                cmd,
+                &terrain,
+                &fixed,
+                1,
+                gem_count as u32,
+                scene.gem.0 as u32,
+                scene.gem.1 as u32,
+                material,
+            );
             draws += 1;
+            triangles += scene.gem.1 / 3 * gem_count as i32;
+            material = Material::Instanced;
+            pipeline.draw(
+                cmd,
+                &stress,
+                &dynamic,
+                0,
+                visible.len() as u32,
+                0,
+                stress.count,
+                material,
+            );
+            if !visible.is_empty() {
+                draws += 1;
+            }
+            triangles += stress.count as i32 / 3 * visible.len() as i32;
         }
-        triangles += stress.count as i32 / 3 * visible.len() as i32;
         d.cmd_end_render_pass(cmd);
         d.end_command_buffer(cmd)?;
         let prepared = prepare.elapsed().as_secs_f64();
@@ -628,6 +716,8 @@ pub unsafe extern "system" fn Java_dev_tcl_rustengine_VulkanActivity_runVulkan(
     limit: i32,
     tour: u8,
     fixed_time: f32,
+    water_mode: u8,
+    water_height: i32,
 ) {
     let window = ANativeWindow_fromSurface(env, surface);
     if window.is_null() {
@@ -640,6 +730,8 @@ pub unsafe extern "system" fn Java_dev_tcl_rustengine_VulkanActivity_runVulkan(
         limit.max(0) as u32,
         tour != 0,
         fixed_time,
+        water_mode != 0,
+        water_height.clamp(360, 2160) as u32,
     ) {
         log(&format!("VULKAN FAIL {e}"));
     }
