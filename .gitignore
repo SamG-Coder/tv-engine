@@ -1,0 +1,9 @@
+*.apk
+*.apk.idsig
+*.keystore
+/out/
+/target/
+/evidence/*
+!/evidence/vulkan-hardware-results.json
+!/evidence/vulkan-scene-results.json
+!/evidence/vulkan-island-final.png

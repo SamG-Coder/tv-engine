@@ -1,0 +1,65 @@
+{
+  "vulkan-a55-present.txt": {
+    "intervals": 126,
+    "fps": 55.611025861983045,
+    "p95_ms": 33.321259,
+    "max_ms": 34.000704,
+    "over_25_ms": 10
+  },
+  "vulkan-cached-memory-present.txt": {
+    "intervals": 126,
+    "fps": 55.2067208146657,
+    "p95_ms": 33.309149,
+    "max_ms": 34.031889,
+    "over_25_ms": 11
+  },
+  "vulkan-hardware-opt-present.txt": {
+    "intervals": 125,
+    "fps": 55.56265663593523,
+    "p95_ms": 33.316482,
+    "max_ms": 34.031037,
+    "over_25_ms": 10
+  },
+  "vulkan-three-frames-present.txt": {
+    "intervals": 126,
+    "fps": 50.07266278564055,
+    "p95_ms": 33.340518,
+    "max_ms": 33.984407,
+    "over_25_ms": 25
+  },
+  "vulkan-layout-fixed-present.txt": {
+    "intervals": 126,
+    "fps": 53.6397275210654,
+    "p95_ms": 33.316259,
+    "max_ms": 34.141815,
+    "over_25_ms": 15
+  },
+  "vulkan-layout-tour-present.txt": {
+    "intervals": 125,
+    "fps": 52.45462225219436,
+    "p95_ms": 33.337741,
+    "max_ms": 34.065148,
+    "over_25_ms": 18
+  },
+  "vulkan-release-0-present.txt": {
+    "intervals": 125,
+    "fps": 60.0077343824827,
+    "p95_ms": 17.372481,
+    "max_ms": 17.481148,
+    "over_25_ms": 0
+  },
+  "vulkan-release-2048-present.txt": {
+    "intervals": 126,
+    "fps": 60.00806885639007,
+    "p95_ms": 17.399741,
+    "max_ms": 17.448148,
+    "over_25_ms": 0
+  },
+  "vulkan-release-8192-present.txt": {
+    "intervals": 125,
+    "fps": 55.97750992031752,
+    "p95_ms": 33.319185,
+    "max_ms": 34.057037,
+    "over_25_ms": 9
+  }
+}

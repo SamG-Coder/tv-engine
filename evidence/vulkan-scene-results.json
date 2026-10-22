@@ -1,0 +1,51 @@
+{
+  "vulkan-fixed8192-present.txt": {
+    "intervals": 125,
+    "fps": 53.563432354429544,
+    "p95_ms": 33.317741,
+    "max_ms": 34.013408,
+    "over_25_ms": 15
+  },
+  "gles-fixed8192-present.txt": {
+    "intervals": 125,
+    "fps": 45.18667039378856,
+    "p95_ms": 34.028889,
+    "max_ms": 34.222,
+    "over_25_ms": 41
+  },
+  "vulkan-final8192-present.txt": {
+    "intervals": 126,
+    "fps": 55.595664420116606,
+    "p95_ms": 33.324445,
+    "max_ms": 34.052777,
+    "over_25_ms": 10
+  },
+  "gles-final8192-present.txt": {
+    "intervals": 126,
+    "fps": 49.11014925471203,
+    "p95_ms": 33.347926,
+    "max_ms": 34.063629,
+    "over_25_ms": 28
+  },
+  "vulkan-verified-0-present.txt": {
+    "intervals": 125,
+    "fps": 60.00924199935663,
+    "p95_ms": 17.386741,
+    "max_ms": 17.414,
+    "over_25_ms": 0
+  },
+  "vulkan-verified-2048-present.txt": {
+    "intervals": 126,
+    "fps": 60.008082602946914,
+    "p95_ms": 17.387074,
+    "max_ms": 17.448037,
+    "over_25_ms": 0
+  },
+  "vulkan-verified-8192-present.txt": {
+    "intervals": 126,
+    "fps": 55.189143854941804,
+    "p95_ms": 33.328296,
+    "max_ms": 33.970037,
+    "over_25_ms": 11
+  }
+}
